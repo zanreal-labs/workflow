@@ -58,7 +58,10 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const result = await priceWorkflow.execute(product);
+    const response = await priceWorkflow.execute(product);
+    expect(response.success).toBe(true);
+    const result = response.result as ProductWithPrice;
+
     expect(result.grossPrice).toBe(1230); // 1000 + 23% VAT
     expect(result.finalPrice).toBe(1230); // No discount applied
   });
@@ -80,7 +83,10 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const results = await priceWorkflow.executeBulk(products, { strategy: 'queue' });
+    const responses = await priceWorkflow.executeBulk(products, { strategy: 'queue' });
+    expect(responses.every(r => r.success)).toBe(true);
+
+    const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results
     expect(results[0].grossPrice).toBe(1230); // 1000 + 23% VAT
@@ -113,7 +119,10 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const results = await priceWorkflow.executeBulk(products, { strategy: 'parallel' });
+    const responses = await priceWorkflow.executeBulk(products, { strategy: 'parallel' });
+    expect(responses.every(r => r.success)).toBe(true);
+
+    const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results (same expectations as queue strategy)
     expect(results[0].grossPrice).toBe(1230);
@@ -145,10 +154,13 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const results = await priceWorkflow.executeBulk(
+    const responses = await priceWorkflow.executeBulk(
       products,
       { strategy: 'bottleneck', concurrency: 2 }
     );
+    expect(responses.every(r => r.success)).toBe(true);
+
+    const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results for electronic items with discount
     expect(results[0].grossPrice).toBe(1230);
@@ -192,7 +204,10 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyDiscountHandler)
       .addHandler(applyPromoHandler);
 
-    const result = await promoWorkflow.execute(product);
+    const response = await promoWorkflow.execute(product);
+    expect(response.success).toBe(true);
+
+    const result = response.result as ProductWithPrice & { promoApplied: boolean };
 
     // Manual calculation to verify:
     // Net price: 1000
