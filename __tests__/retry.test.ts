@@ -218,9 +218,9 @@ describe('Workflow Retry Functionality', () => {
     });
 
     expect(results.length).toBe(3);
-    expect(results[0].success).toBe(true);
-    expect(results[1].success).toBe(false); // Should fail after retries
-    expect(results[2].success).toBe(true);
+    expect(results[0]?.success).toBe(true);
+    expect(results[1]?.success).toBe(false); // Should fail after retries
+    expect(results[2]?.success).toBe(true);
 
     // The handler should have been called:
     // - message 1: 1 time (success)

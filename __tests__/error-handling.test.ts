@@ -255,7 +255,7 @@ describe('Workflow Error Handling', () => {
     expect(results.length).toBe(3);
 
     // Check individual results
-    expect(results[0].success).toBe(true);
+    expect(results[0]?.success).toBe(true);
 
     // For message with value 100, we expect a failure
     const failedMessage = results.find(r =>
@@ -299,6 +299,6 @@ describe('Workflow Error Handling', () => {
     // Make sure we have at least one failure
     const errors = results.filter(r => !r.success);
     expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors[0].error?.message).toContain("exceeds limit");
+    expect(errors[0]?.error?.message).toContain("exceeds limit");
   });
 });

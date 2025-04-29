@@ -16,6 +16,14 @@ interface ProductWithPrice extends Product {
   finalPrice?: number;
 }
 
+interface PricingResult {
+  id: number;
+  name: string;
+  price: number;
+  tax: number;
+  totalPrice: number;
+}
+
 // Define handlers for price calculations
 const applyVatHandler = async (product: Product, initialState: WorkflowState, currentState: WorkflowState) => {
   const vatRates = currentState.vatRates || { standard: 0.23, reduced: 0.08, exempt: 0 };
@@ -38,6 +46,18 @@ const applyDiscountHandler = async (product: ProductWithPrice, initialState: Wor
     ...product,
     discount: discountPercent,
     finalPrice: +(product.grossPrice * (1 - discountPercent)).toFixed(2)
+  };
+};
+
+const calculatePriceWithTax = async (product: any): Promise<PricingResult> => {
+  const taxRate = 0.1; // 10% tax
+  const tax = product.price * taxRate;
+  return {
+    id: product.id,
+    name: product.name,
+    price: product.price,
+    tax: tax,
+    totalPrice: product.price + tax
   };
 };
 
@@ -89,17 +109,17 @@ describe('Price Calculation Workflow', () => {
     const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results
-    expect(results[0].grossPrice).toBe(1230); // 1000 + 23% VAT
-    expect(results[0].finalPrice).toBe(1168.50); // 5% discount on electronics
+    expect(results[0]?.grossPrice).toBe(1230); // 1000 + 23% VAT
+    expect(results[0]?.finalPrice).toBe(1168.50); // 5% discount on electronics
 
-    expect(results[1].grossPrice).toBe(54); // 50 + 8% VAT
-    expect(results[1].finalPrice).toBe(48.60); // 10% discount on books
+    expect(results[1]?.grossPrice).toBe(54); // 50 + 8% VAT
+    expect(results[1]?.finalPrice).toBe(48.60); // 10% discount on books
 
-    expect(results[2].grossPrice).toBe(2.16); // 2 + 8% VAT
-    expect(results[2].finalPrice).toBe(2.16); // No discount on food
+    expect(results[2]?.grossPrice).toBe(2.16); // 2 + 8% VAT
+    expect(results[2]?.finalPrice).toBe(2.16); // No discount on food
 
-    expect(results[3].grossPrice).toBe(100); // No VAT on medical
-    expect(results[3].finalPrice).toBe(100); // No discount on medical
+    expect(results[3]?.grossPrice).toBe(100); // No VAT on medical
+    expect(results[3]?.finalPrice).toBe(100); // No discount on medical
   });
 
   test('bulk price calculation - parallel strategy', async () => {
@@ -125,14 +145,14 @@ describe('Price Calculation Workflow', () => {
     const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results (same expectations as queue strategy)
-    expect(results[0].grossPrice).toBe(1230);
-    expect(results[0].finalPrice).toBe(1168.50);
-    expect(results[1].grossPrice).toBe(54);
-    expect(results[1].finalPrice).toBe(48.60);
-    expect(results[2].grossPrice).toBe(2.16);
-    expect(results[2].finalPrice).toBe(2.16);
-    expect(results[3].grossPrice).toBe(100);
-    expect(results[3].finalPrice).toBe(100);
+    expect(results[0]?.grossPrice).toBe(1230);
+    expect(results[0]?.finalPrice).toBe(1168.50);
+    expect(results[1]?.grossPrice).toBe(54);
+    expect(results[1]?.finalPrice).toBe(48.60);
+    expect(results[2]?.grossPrice).toBe(2.16);
+    expect(results[2]?.finalPrice).toBe(2.16);
+    expect(results[3]?.grossPrice).toBe(100);
+    expect(results[3]?.finalPrice).toBe(100);
   });
 
   test('bulk price calculation - bottleneck strategy', async () => {
@@ -163,12 +183,78 @@ describe('Price Calculation Workflow', () => {
     const results = responses.map(r => r.result as ProductWithPrice);
 
     // Check results for electronic items with discount
-    expect(results[0].grossPrice).toBe(1230);
-    expect(results[0].finalPrice).toBe(1168.50);
-    expect(results[1].grossPrice).toBe(984);
-    expect(results[1].finalPrice).toBe(934.80);
-    expect(results[2].grossPrice).toBe(738);
-    expect(results[2].finalPrice).toBe(701.10);
+    expect(results[0]?.grossPrice).toBe(1230);
+    expect(results[0]?.finalPrice).toBe(1168.50);
+    expect(results[1]?.grossPrice).toBe(984);
+    expect(results[1]?.finalPrice).toBe(934.80);
+    expect(results[2]?.grossPrice).toBe(738);
+    expect(results[2]?.finalPrice).toBe(701.10);
+  });
+
+  test('bulk price calculation - bottleneck strategy with rate limiting', async () => {
+    const workflow = createWorkflow<Product, PricingResult>();
+    workflow.addHandler(calculatePriceWithTax);
+
+    const products = [
+      { id: 1, name: 'Product 1', price: 100 },
+      { id: 2, name: 'Product 2', price: 200 },
+      { id: 3, name: 'Product 3', price: 300 },
+      { id: 4, name: 'Product 4', price: 400 },
+      { id: 5, name: 'Product 5', price: 500 },
+    ];
+
+    const startTime = Date.now();
+    const results = await workflow.executeBulk(
+      products,
+      { strategy: 'bottleneck', concurrency: 2, rateLimit: 5 } // 5 requests per second
+    );
+    const endTime = Date.now();
+
+    // With 5 products, concurrency of 2, and rate limit of 5 req/sec,
+    // this should take at least 200ms due to rate limiting
+    const executionTime = endTime - startTime;
+    expect(executionTime).toBeGreaterThanOrEqual(200);
+
+    expect(results.length).toBe(5);
+    expect(results.every(r => r.success)).toBe(true);
+
+    const totalPrice = results.reduce((sum, r) => sum + (r.result?.totalPrice || 0), 0);
+    expect(totalPrice).toBe(1650); // 1500 + 10% tax
+  });
+
+  test('bulk price calculation - bottleneck strategy with rate limit per minute', async () => {
+    const workflow = createWorkflow<Product, PricingResult>();
+    workflow.addHandler(calculatePriceWithTax);
+
+    const products = [
+      { id: 1, name: 'Product 1', price: 100 },
+      { id: 2, name: 'Product 2', price: 200 },
+      { id: 3, name: 'Product 3', price: 300 },
+      { id: 4, name: 'Product 4', price: 400 },
+      { id: 5, name: 'Product 5', price: 500 },
+      { id: 6, name: 'Product 6', price: 600 }
+    ];
+
+    const startTime = Date.now();
+    const results = await workflow.executeBulk(
+      products,
+      {
+        strategy: 'bottleneck',
+        concurrency: 3,
+        rateLimit: { value: 9000, unit: 'minute' } // 9000 requests per minute
+      }
+    );
+    const endTime = Date.now();
+
+    // With 6 products and rate limit of 9000/minute (6.7ms between batches),
+    // this should take minimal time but still respect the rate limit
+    const executionTime = endTime - startTime;
+
+    expect(results.length).toBe(6);
+    expect(results.every(r => r.success)).toBe(true);
+
+    const totalPrice = results.reduce((sum, r) => sum + (r.result?.totalPrice || 0), 0);
+    expect(totalPrice).toBe(2310); // 2100 + 10% tax
   });
 
   test('workflow with promo campaign state', async () => {

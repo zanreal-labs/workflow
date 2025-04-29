@@ -2,18 +2,41 @@
 export type WorkflowState = Record<string, any>;
 export type WorkflowHandler<T = any, R = any> = (message: T, initialState: WorkflowState, currentState: WorkflowState) => Promise<R>;
 
-export interface WorkflowExecutionOptions {
-  strategy: 'queue' | 'parallel' | 'bottleneck';
-  concurrency?: number; // For bottleneck strategy
-  errorHandling?: ErrorHandlingStrategy;
+export type ExecutionStrategy = 'queue' | 'parallel' | 'bottleneck';
+export type ErrorHandlingStrategy = 'fail-fast' | 'continue' | 'retry';
+export type RateLimitUnit = 'second' | 'minute' | 'hour' | 'day';
+
+export interface RateLimit {
+  value: number;
+  unit: RateLimitUnit;
 }
 
-export type ErrorHandlingStrategy = 'fail-fast' | 'continue' | 'retry';
+export interface WorkflowOptions {
+  strategy?: ExecutionStrategy;
+  concurrency?: number;
+  rateLimit?: number | RateLimit;
+  errorHandling?: ErrorHandlingStrategy;
+  retryOptions?: RetryOptions;
+}
+
+export interface ExecuteOptions {
+  strategy?: ExecutionStrategy;
+  concurrency?: number;
+  rateLimit?: number | RateLimit;
+  errorHandling?: ErrorHandlingStrategy;
+  state?: WorkflowState;
+  retryOptions?: RetryOptions;
+}
 
 export interface RetryOptions {
   maxRetries: number;
   retryDelay: number;
   backoffFactor?: number;
+  handlerOverrides?: Record<number, {
+    maxRetries?: number;
+    retryDelay?: number;
+    backoffFactor?: number;
+  }>;
 }
 
 export interface WorkflowError<T = any> {
@@ -36,18 +59,36 @@ export interface WorkflowResult<R = any> {
 export class Workflow<T = any, R = any> {
   private handlers: WorkflowHandler<T, R>[] = [];
   private initialState: WorkflowState = {};
-  private retryOptions: RetryOptions = {
-    maxRetries: 3,
-    retryDelay: 500,
-    backoffFactor: 2
+  private globalOptions: WorkflowOptions = {
+    strategy: 'queue',
+    concurrency: 5,
+    errorHandling: 'fail-fast',
+    retryOptions: {
+      maxRetries: 3,
+      retryDelay: 500,
+      backoffFactor: 2
+    }
   };
 
   /**
    * Create a new Workflow instance
-   * @param initialState Optional initial state for the workflow
+   * @param initialStateOrOptions Initial state object or workflow options
+   * @param options Workflow execution options (if first param is state)
    */
-  constructor(initialState: WorkflowState = {}) {
-    this.initialState = { ...initialState };
+  constructor(initialStateOrOptions: WorkflowState | WorkflowOptions = {}, options?: WorkflowOptions) {
+    if (options) {
+      // First param is state, second is options
+      this.initialState = { ...initialStateOrOptions as WorkflowState };
+      this.globalOptions = { ...this.globalOptions, ...options };
+    } else if ('strategy' in initialStateOrOptions || 'errorHandling' in initialStateOrOptions ||
+      'concurrency' in initialStateOrOptions || 'rateLimit' in initialStateOrOptions ||
+      'retryOptions' in initialStateOrOptions) {
+      // First param is options
+      this.globalOptions = { ...this.globalOptions, ...initialStateOrOptions as WorkflowOptions };
+    } else {
+      // First param is state
+      this.initialState = { ...initialStateOrOptions as WorkflowState };
+    }
   }
 
   /**
@@ -61,37 +102,86 @@ export class Workflow<T = any, R = any> {
   }
 
   /**
-   * Configure retry options for the workflow
-   * @param options Retry configuration options
+   * Configure workflow options
+   * @param options Workflow options configuration
    * @returns The workflow instance for chaining
    */
-  configureRetry(options: Partial<RetryOptions>): Workflow<T, R> {
-    this.retryOptions = { ...this.retryOptions, ...options };
+  configure(options: Partial<WorkflowOptions>): Workflow<T, R> {
+    this.globalOptions = { ...this.globalOptions, ...options };
+    if (options.retryOptions) {
+      this.globalOptions.retryOptions = {
+        ...this.globalOptions.retryOptions,
+        ...options.retryOptions
+      };
+    }
     return this;
   }
 
   /**
-   * Execute the workflow with a single message
-   * @param message The message to process
-   * @param currentState Optional current state (defaults to initialState)
-   * @param options Optional execution options
-   * @returns Result of the workflow execution
+   * Execute the workflow with single message or multiple messages
+   * @param input Single message or array of messages to process
+   * @param optionsOrState Optional execution options or state object
+   * @param state Optional state override (if second param is options)
+   * @returns Result(s) of the workflow execution
    */
   async execute(
+    input: T | T[],
+    optionsOrState?: ExecuteOptions | WorkflowState,
+    state?: WorkflowState
+  ): Promise<WorkflowResult<R> | WorkflowResult<R>[]> {
+    // Determine if we're processing a single item or an array
+    const isArray = Array.isArray(input);
+
+    // Parse options and state
+    let options: ExecuteOptions = { ...this.globalOptions };
+    let currentState: WorkflowState = { ...this.initialState };
+
+    if (optionsOrState) {
+      if ('strategy' in optionsOrState || 'errorHandling' in optionsOrState ||
+        'concurrency' in optionsOrState || 'rateLimit' in optionsOrState ||
+        'retryOptions' in optionsOrState || 'state' in optionsOrState) {
+        // Second parameter is options
+        options = { ...options, ...optionsOrState as ExecuteOptions };
+        if ((optionsOrState as ExecuteOptions).state) {
+          currentState = { ...currentState, ...(optionsOrState as ExecuteOptions).state };
+        }
+        // Third parameter is additional state override
+        if (state) {
+          currentState = { ...currentState, ...state };
+        }
+      } else {
+        // Second parameter is state
+        currentState = { ...currentState, ...optionsOrState as WorkflowState };
+      }
+    }
+
+    // If single item, process it directly
+    if (!isArray) {
+      return this.executeSingle(input as T, currentState, options);
+    }
+
+    // Otherwise, process as an array using the specified strategy
+    return this.executeBulk(input as T[], currentState, options);
+  }
+
+  /**
+   * Execute a single message through the workflow
+   * @private
+   */
+  private async executeSingle(
     message: T,
-    currentState?: WorkflowState,
-    options?: { errorHandling?: ErrorHandlingStrategy }
+    state: WorkflowState,
+    options: ExecuteOptions
   ): Promise<WorkflowResult<R>> {
-    const state = currentState ? { ...this.initialState, ...currentState } : { ...this.initialState };
     let result: any = message;
-    const errorHandling = options?.errorHandling || 'fail-fast';
+    const errorHandling = options.errorHandling || this.globalOptions.errorHandling || 'fail-fast';
     let lastError: WorkflowError<T> | undefined = undefined;
 
     try {
       for (let i = 0; i < this.handlers.length; i++) {
         const handler = this.handlers[i]!;
         try {
-          result = await this.executeHandlerWithRetry(handler, result, i, state, errorHandling);
+          result = await this.executeHandlerWithRetry(handler, result, i, state, options);
         } catch (error) {
           const workflowError: WorkflowError<T> = {
             message: `Error in handler at index ${i}: ${error instanceof Error ? error.message : String(error)}`,
@@ -157,29 +247,37 @@ export class Workflow<T = any, R = any> {
     message: any,
     handlerIndex: number,
     state: WorkflowState,
-    errorHandling: ErrorHandlingStrategy
+    options: ExecuteOptions
   ): Promise<any> {
+    const errorHandling = options.errorHandling || this.globalOptions.errorHandling || 'fail-fast';
     if (errorHandling !== 'retry') {
       return await handler(message, this.initialState, state);
     }
 
+    // Get retry options with handler-specific overrides if available
+    const globalRetryOptions = options.retryOptions || this.globalOptions.retryOptions || { maxRetries: 3, retryDelay: 500, backoffFactor: 2 };
+    const handlerOverrides = globalRetryOptions.handlerOverrides?.[handlerIndex];
+
+    const maxRetries = handlerOverrides?.maxRetries ?? globalRetryOptions.maxRetries;
+    let delay = handlerOverrides?.retryDelay ?? globalRetryOptions.retryDelay;
+    const backoffFactor = handlerOverrides?.backoffFactor ?? globalRetryOptions.backoffFactor ?? 1;
+
     let lastError: Error | null = null;
     let retryCount = 0;
-    let delay = this.retryOptions.retryDelay;
 
-    while (retryCount <= this.retryOptions.maxRetries) {
+    while (retryCount <= maxRetries) {
       try {
         if (retryCount > 0) {
-          console.log(`Retrying handler at index ${handlerIndex}, attempt ${retryCount}/${this.retryOptions.maxRetries}`);
+          console.log(`Retrying handler at index ${handlerIndex}, attempt ${retryCount}/${maxRetries}`);
         }
         return await handler(message, this.initialState, state);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         retryCount++;
 
-        if (retryCount <= this.retryOptions.maxRetries) {
+        if (retryCount <= maxRetries) {
           await new Promise(resolve => setTimeout(resolve, delay));
-          delay *= (this.retryOptions.backoffFactor || 1);
+          delay *= backoffFactor;
         } else {
           break; // Exit when max retries exceeded
         }
@@ -191,27 +289,24 @@ export class Workflow<T = any, R = any> {
 
   /**
    * Execute the workflow with multiple messages
-   * @param messages Array of messages to process
-   * @param options Execution options
-   * @param currentState Optional current state (defaults to initialState)
-   * @returns Array of results from the workflow execution
+   * @private
    */
-  async executeBulk(
+  private async executeBulk(
     messages: T[],
-    options: WorkflowExecutionOptions,
-    currentState?: WorkflowState
+    state: WorkflowState,
+    options: ExecuteOptions
   ): Promise<WorkflowResult<R>[]> {
-    const state = currentState ? { ...this.initialState, ...currentState } : { ...this.initialState };
+    const strategy = options.strategy || this.globalOptions.strategy || 'queue';
 
-    switch (options.strategy) {
+    switch (strategy) {
       case 'queue':
         return this.executeQueue(messages, state, options.errorHandling);
       case 'parallel':
         return this.executeParallel(messages, state, options.errorHandling);
       case 'bottleneck':
-        return this.executeBottleneck(messages, state, options.concurrency || 5, options.errorHandling);
+        return this.executeBottleneck(messages, state, options);
       default:
-        throw new Error(`Unknown execution strategy: ${options.strategy}`);
+        throw new Error(`Unknown execution strategy: ${strategy}`);
     }
   }
 
@@ -227,8 +322,8 @@ export class Workflow<T = any, R = any> {
     const results: WorkflowResult<R>[] = [];
 
     for (const message of messages) {
-      const result = await this.execute(message, { ...state }, { errorHandling });
-      results.push(result);
+      const result = await this.executeSingle(message, state, { errorHandling });
+      results.push(result as WorkflowResult<R>);
 
       // If fail-fast and we had an error, stop processing
       if (errorHandling === 'fail-fast' && !result.success) {
@@ -248,59 +343,135 @@ export class Workflow<T = any, R = any> {
     state: WorkflowState,
     errorHandling?: ErrorHandlingStrategy
   ): Promise<WorkflowResult<R>[]> {
-    const promises = messages.map(message => this.execute(message, state, { errorHandling }));
+    const promises = messages.map(message => this.executeSingle(message, state, { errorHandling }));
     return Promise.all(promises);
   }
 
   /**
-   * Execute messages in parallel with a concurrency limit
+   * Execute messages in parallel with a concurrency limit and optional rate limiting
    * @private
    */
   private async executeBottleneck(
     messages: T[],
     state: WorkflowState,
-    concurrency: number,
-    errorHandling?: ErrorHandlingStrategy
+    options: ExecuteOptions
   ): Promise<WorkflowResult<R>[]> {
-    const results: WorkflowResult<R>[] = [];
+    const results: WorkflowResult<R>[] = new Array(messages.length);
     const messageQueue = [...messages];
+    let activeCount = 0;
     let hasFailedFast = false;
+    let lastRequestTime = 0;
+    let index = 0;
 
-    // Process messages in batches with limited concurrency
-    while (messageQueue.length > 0 && !hasFailedFast) {
-      const batchSize = Math.min(concurrency, messageQueue.length);
-      const batch = messageQueue.splice(0, batchSize);
-
-      const batchResults = await Promise.all(
-        batch.map(async (message) => {
-          const result = await this.execute(message, state, { errorHandling });
-
-          // If using fail-fast strategy and we got an error, flag to stop processing
-          if (errorHandling === 'fail-fast' && !result.success) {
-            hasFailedFast = true;
-          }
-
-          return result;
-        })
-      );
-
-      results.push(...batchResults);
-
-      // Stop processing if we had a failure with fail-fast strategy
-      if (hasFailedFast) {
-        break;
+    // Calculate delay in milliseconds between requests based on rate limit
+    const getMinDelayMs = (rateLimit: number | RateLimit): number => {
+      if (typeof rateLimit === 'number') {
+        // Legacy mode: treat as requests per second
+        return Math.floor(1000 / rateLimit);
+      } else {
+        // New mode with units
+        switch (rateLimit.unit) {
+          case 'second':
+            return Math.floor(1000 / rateLimit.value);
+          case 'minute':
+            return Math.floor(60000 / rateLimit.value);
+          case 'hour':
+            return Math.floor(3600000 / rateLimit.value);
+          case 'day':
+            return Math.floor(86400000 / rateLimit.value);
+          default:
+            return Math.floor(1000 / rateLimit.value); // Default to second
+        }
       }
+    };
+
+    const minDelayMs = options.rateLimit ? getMinDelayMs(options.rateLimit) : 0;
+    const concurrency = options.concurrency || this.globalOptions.concurrency || 5;
+    const errorHandling = options.errorHandling || this.globalOptions.errorHandling;
+
+    const processNext = async (): Promise<void> => {
+      if (hasFailedFast || messageQueue.length === 0) {
+        return;
+      }
+
+      // Check if we need to wait due to rate limiting
+      const now = Date.now();
+      const timeToWait = Math.max(0, lastRequestTime + minDelayMs - now);
+
+      if (timeToWait > 0) {
+        await new Promise(resolve => setTimeout(resolve, timeToWait));
+      }
+
+      // Get the next message
+      const message = messageQueue.shift()!;
+      const currentIndex = index++;
+      activeCount++;
+      lastRequestTime = Date.now();
+
+      try {
+        // Use executeSingle directly to avoid recursion
+        const result = await this.executeSingle(message, state, options);
+
+        // Store result in the correct order
+        results[currentIndex] = result as WorkflowResult<R>;
+
+        // If using fail-fast strategy and we got an error, flag to stop processing
+        if (errorHandling === 'fail-fast' && !result.success) {
+          hasFailedFast = true;
+        }
+      } catch (error) {
+        // This should not happen because errors are handled in this.executeSingle,
+        // but add as a safeguard
+        results[currentIndex] = {
+          success: false,
+          error: {
+            message: `Unhandled error: ${error instanceof Error ? error.message : String(error)}`,
+            originalError: error instanceof Error ? error : new Error(String(error)),
+            handlerIndex: -1,
+            inputMessage: message,
+            state: { ...state }
+          }
+        };
+
+        if (errorHandling === 'fail-fast') {
+          hasFailedFast = true;
+        }
+      } finally {
+        activeCount--;
+
+        // Try to process next message
+        processNext();
+      }
+    };
+
+    // Start initial batch of requests up to concurrency limit
+    const startPromises = [];
+    for (let i = 0; i < Math.min(concurrency, messages.length); i++) {
+      startPromises.push(processNext());
     }
 
-    return results;
+    // Wait for all requests to complete
+    await Promise.all(startPromises);
+
+    // Wait until all active requests finish
+    while (activeCount > 0) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    // Filter out any undefined results (should not happen, but just in case)
+    return results.filter(r => r !== undefined);
   }
 }
 
 /**
  * Create a new workflow instance
- * @param initialState Optional initial state for the workflow
+ * @param stateOrOptions Optional initial state or options for the workflow
+ * @param options Optional workflow execution options (if first param is state)
  * @returns A new Workflow instance
  */
-export function createWorkflow<T = any, R = any>(initialState: WorkflowState = {}): Workflow<T, R> {
-  return new Workflow<T, R>(initialState);
+export function createWorkflow<T = any, R = any>(
+  stateOrOptions: WorkflowState | WorkflowOptions = {},
+  options?: WorkflowOptions
+): Workflow<T, R> {
+  return new Workflow<T, R>(stateOrOptions, options);
 }
