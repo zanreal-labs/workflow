@@ -19,11 +19,11 @@ interface ProductWithPrice extends Product {
 // Define handlers for price calculations
 const applyVatHandler = async (product: Product, initialState: WorkflowState, currentState: WorkflowState) => {
   const vatRates = currentState.vatRates || { standard: 0.23, reduced: 0.08, exempt: 0 };
-  const rate = product.category === 'food' ? vatRates.reduced : 
-               product.category === 'books' ? vatRates.reduced : 
-               product.category === 'medical' ? vatRates.exempt : 
-               vatRates.standard;
-  
+  const rate = product.category === 'food' ? vatRates.reduced :
+    product.category === 'books' ? vatRates.reduced :
+      product.category === 'medical' ? vatRates.exempt :
+        vatRates.standard;
+
   return {
     ...product,
     grossPrice: +(product.netPrice * (1 + rate)).toFixed(2)
@@ -33,7 +33,7 @@ const applyVatHandler = async (product: Product, initialState: WorkflowState, cu
 const applyDiscountHandler = async (product: ProductWithPrice, initialState: WorkflowState, currentState: WorkflowState) => {
   const discounts = currentState.discounts || {};
   const discountPercent = discounts[product.category] || 0;
-  
+
   return {
     ...product,
     discount: discountPercent,
@@ -49,11 +49,11 @@ describe('Price Calculation Workflow', () => {
       netPrice: 1000,
       category: "electronics"
     };
-    
+
     const priceWorkflow = createWorkflow({
       vatRates: { standard: 0.23, reduced: 0.08, exempt: 0 }
     });
-    
+
     priceWorkflow
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
@@ -70,28 +70,28 @@ describe('Price Calculation Workflow', () => {
       { id: "prod-003", name: "Apple", netPrice: 2, category: "food" },
       { id: "prod-004", name: "Medicine", netPrice: 100, category: "medical" },
     ];
-    
+
     const priceWorkflow = createWorkflow({
       vatRates: { standard: 0.23, reduced: 0.08, exempt: 0 },
       discounts: { books: 0.10, electronics: 0.05 }
     });
-    
+
     priceWorkflow
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
     const results = await priceWorkflow.executeBulk(products, { strategy: 'queue' });
-    
+
     // Check results
     expect(results[0].grossPrice).toBe(1230); // 1000 + 23% VAT
     expect(results[0].finalPrice).toBe(1168.50); // 5% discount on electronics
-    
+
     expect(results[1].grossPrice).toBe(54); // 50 + 8% VAT
     expect(results[1].finalPrice).toBe(48.60); // 10% discount on books
-    
+
     expect(results[2].grossPrice).toBe(2.16); // 2 + 8% VAT
     expect(results[2].finalPrice).toBe(2.16); // No discount on food
-    
+
     expect(results[3].grossPrice).toBe(100); // No VAT on medical
     expect(results[3].finalPrice).toBe(100); // No discount on medical
   });
@@ -103,18 +103,18 @@ describe('Price Calculation Workflow', () => {
       { id: "prod-003", name: "Apple", netPrice: 2, category: "food" },
       { id: "prod-004", name: "Medicine", netPrice: 100, category: "medical" },
     ];
-    
+
     const priceWorkflow = createWorkflow({
       vatRates: { standard: 0.23, reduced: 0.08, exempt: 0 },
       discounts: { books: 0.10, electronics: 0.05 }
     });
-    
+
     priceWorkflow
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
     const results = await priceWorkflow.executeBulk(products, { strategy: 'parallel' });
-    
+
     // Check results (same expectations as queue strategy)
     expect(results[0].grossPrice).toBe(1230);
     expect(results[0].finalPrice).toBe(1168.50);
@@ -135,12 +135,12 @@ describe('Price Calculation Workflow', () => {
       { id: "prod-004", name: "Book", netPrice: 50, category: "books" },
       { id: "prod-005", name: "Medicine", netPrice: 100, category: "medical" },
     ];
-    
+
     const priceWorkflow = createWorkflow({
       vatRates: { standard: 0.23, reduced: 0.08, exempt: 0 },
       discounts: { electronics: 0.05 }
     });
-    
+
     priceWorkflow
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
@@ -149,7 +149,7 @@ describe('Price Calculation Workflow', () => {
       products,
       { strategy: 'bottleneck', concurrency: 2 }
     );
-    
+
     // Check results for electronic items with discount
     expect(results[0].grossPrice).toBe(1230);
     expect(results[0].finalPrice).toBe(1168.50);
@@ -167,8 +167,8 @@ describe('Price Calculation Workflow', () => {
       netPrice: 1000,
       category: "electronics"
     };
-    
-    const promoWorkflow = createWorkflow({ 
+
+    const promoWorkflow = createWorkflow({
       vatRates: { standard: 0.23, reduced: 0.08, exempt: 0 },
       discounts: { electronics: 0.05 }, // 5% regular category discount
       promoActive: true,
@@ -191,9 +191,9 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler)
       .addHandler(applyPromoHandler);
-    
+
     const result = await promoWorkflow.execute(product);
-    
+
     // Manual calculation to verify:
     // Net price: 1000
     // With VAT (23%): 1000 * 1.23 = 1230

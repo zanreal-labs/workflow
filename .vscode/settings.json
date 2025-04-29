@@ -1,0 +1,47 @@
+{
+  // Enable built-in formatters for different file types
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": null,
+  // TypeScript formatting
+  "[typescript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // JavaScript formatting
+  "[javascript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // JSON formatting
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // JSON with Comments formatting
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // Markdown formatting
+  "[markdown]": {
+    "editor.defaultFormatter": "vscode.markdown-language-features",
+    "editor.wordWrap": "on"
+  },
+  // TOML formatting
+  "[toml]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  // Format all files using the appropriate formatter
+  "editor.codeActionsOnSave": {
+    "source.fixAll": true
+  },
+  // Use prettier for supported files
+  "prettier.documentSelectors": [
+    "**/*.{js,jsx,ts,tsx,json,md}"
+  ]
+}
