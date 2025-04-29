@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { createWorkflow } from '../src/index';
-import type { WorkflowState } from '../src/index';
+import { createWorkflow } from '../dist/index';
+import type { WorkflowState } from '../dist/index';
 
 // Define interfaces for product data
 interface Product {
