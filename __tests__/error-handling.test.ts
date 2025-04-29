@@ -72,7 +72,7 @@ describe('Workflow Error Handling', () => {
       .addHandler(multiplyHandler);
 
     const message: TestMessage = { id: "test-1", value: 10 };
-    const result = await workflow.execute(message, undefined, { errorHandling: 'continue' });
+    const result = await workflow.execute(message, { errorHandling: 'continue' });
 
     // With 'continue', the success status is false if any errors occurred
     // but the workflow continues processing through other handlers
@@ -106,14 +106,16 @@ describe('Workflow Error Handling', () => {
     workflow
       .addHandler(successHandler)
       .addHandler(flakeyHandler)
-      .configureRetry({
-        maxRetries: 3,
-        retryDelay: 50,
-        backoffFactor: 1.5
+      .configure({
+        retryOptions: {
+          maxRetries: 3,
+          retryDelay: 50,
+          backoffFactor: 1.5
+        }
       });
 
     const message: TestMessage = { id: "test-1", value: 10 };
-    const result = await workflow.execute(message, undefined, { errorHandling: 'retry' });
+    const result = await workflow.execute(message, { errorHandling: 'retry' });
 
     expect(result.success).toBe(true);
     expect(flakeyHandler).toHaveBeenCalledTimes(3); // Called 3 times (2 failures + 1 success)
@@ -130,13 +132,15 @@ describe('Workflow Error Handling', () => {
     workflow
       .addHandler(successHandler)
       .addHandler(alwaysFailHandler)
-      .configureRetry({
-        maxRetries: 2,
-        retryDelay: 50
+      .configure({
+        retryOptions: {
+          maxRetries: 2,
+          retryDelay: 50
+        }
       });
 
     const message: TestMessage = { id: "test-1", value: 10 };
-    const result = await workflow.execute(message, undefined, { errorHandling: 'retry' });
+    const result = await workflow.execute(message, { errorHandling: 'retry' });
 
     expect(result.success).toBe(false);
     expect(alwaysFailHandler).toHaveBeenCalledTimes(3); // Initial + 2 retries
@@ -156,7 +160,7 @@ describe('Workflow Error Handling', () => {
       { id: "test-3", value: 30 }
     ];
 
-    const results = await workflow.executeBulk(messages, {
+    const results = await workflow.execute(messages, {
       strategy: 'queue',
       errorHandling: 'fail-fast'
     });
@@ -201,7 +205,7 @@ describe('Workflow Error Handling', () => {
       { id: "test-3", value: 30 }
     ];
 
-    const results = await workflow.executeBulk(messages, {
+    const results = await workflow.execute(messages, {
       strategy: 'queue',
       errorHandling: 'continue'
     });
@@ -246,7 +250,7 @@ describe('Workflow Error Handling', () => {
       { id: "test-3", value: 30 }
     ];
 
-    const results = await workflow.executeBulk(messages, {
+    const results = await workflow.execute(messages, {
       strategy: 'parallel',
       errorHandling: 'continue'
     });
@@ -286,7 +290,7 @@ describe('Workflow Error Handling', () => {
       { id: "test-5", value: 50 }
     ];
 
-    const results = await workflow.executeBulk(messages, {
+    const results = await workflow.execute(messages, {
       strategy: 'bottleneck',
       concurrency: 2,
       errorHandling: 'fail-fast'

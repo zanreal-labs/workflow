@@ -103,7 +103,7 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const responses = await priceWorkflow.executeBulk(products, { strategy: 'queue' });
+    const responses = await priceWorkflow.execute(products, { strategy: 'queue' });
     expect(responses.every(r => r.success)).toBe(true);
 
     const results = responses.map(r => r.result as ProductWithPrice);
@@ -139,7 +139,7 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const responses = await priceWorkflow.executeBulk(products, { strategy: 'parallel' });
+    const responses = await priceWorkflow.execute(products, { strategy: 'parallel' });
     expect(responses.every(r => r.success)).toBe(true);
 
     const results = responses.map(r => r.result as ProductWithPrice);
@@ -174,7 +174,7 @@ describe('Price Calculation Workflow', () => {
       .addHandler(applyVatHandler)
       .addHandler(applyDiscountHandler);
 
-    const responses = await priceWorkflow.executeBulk(
+    const responses = await priceWorkflow.execute(
       products,
       { strategy: 'bottleneck', concurrency: 2 }
     );
@@ -204,7 +204,7 @@ describe('Price Calculation Workflow', () => {
     ];
 
     const startTime = Date.now();
-    const results = await workflow.executeBulk(
+    const results = await workflow.execute(
       products,
       { strategy: 'bottleneck', concurrency: 2, rateLimit: 5 } // 5 requests per second
     );
@@ -236,7 +236,7 @@ describe('Price Calculation Workflow', () => {
     ];
 
     const startTime = Date.now();
-    const results = await workflow.executeBulk(
+    const results = await workflow.execute(
       products,
       {
         strategy: 'bottleneck',

@@ -37,13 +37,15 @@ describe('Workflow Retry Functionality', () => {
     const workflow = createWorkflow();
     workflow
       .addHandler(flakeyHandler)
-      .configureRetry({
-        maxRetries: 3,
-        retryDelay: 10, // Small delay for faster tests
+      .configure({
+        retryOptions: {
+          maxRetries: 3,
+          retryDelay: 10, // Small delay for faster tests
+        }
       });
 
     const message: TestMessage = { id: "success-after-retries", value: 42 };
-    const result = await workflow.execute(message, undefined, { errorHandling: 'retry' });
+    const result = await workflow.execute(message, { errorHandling: 'retry' });
 
     expect(result.success).toBe(true);
     expect(flakeyHandler).toHaveBeenCalledTimes(3); // Initial + 2 retries to succeed
@@ -66,13 +68,15 @@ describe('Workflow Retry Functionality', () => {
     const workflow = createWorkflow();
     workflow
       .addHandler(persistentFailureHandler)
-      .configureRetry({
-        maxRetries: 2,
-        retryDelay: 10
+      .configure({
+        retryOptions: {
+          maxRetries: 2,
+          retryDelay: 10
+        }
       });
 
     const message: TestMessage = { id: "always-fails", value: 99 };
-    const result = await workflow.execute(message, undefined, { errorHandling: 'retry' });
+    const result = await workflow.execute(message, { errorHandling: 'retry' });
 
     expect(result.success).toBe(false);
     expect(persistentFailureHandler).toHaveBeenCalledTimes(3); // Initial + 2 retries
@@ -94,15 +98,16 @@ describe('Workflow Retry Functionality', () => {
     const workflow = createWorkflow();
     workflow
       .addHandler(backoffTestHandler)
-      .configureRetry({
-        maxRetries: 2,
-        retryDelay: 50, // Small delay for faster tests
-        backoffFactor: 2
+      .configure({
+        retryOptions: {
+          maxRetries: 2,
+          retryDelay: 50, // Small delay for faster tests
+          backoffFactor: 2
+        }
       });
 
     const result = await workflow.execute(
       { id: "backoff-test", value: 1 },
-      undefined,
       { errorHandling: 'retry' }
     );
 
@@ -157,14 +162,15 @@ describe('Workflow Retry Functionality', () => {
       .addHandler(firstHandler)
       .addHandler(secondHandler)
       .addHandler(thirdHandler)
-      .configureRetry({
-        maxRetries: 3,
-        retryDelay: 10
+      .configure({
+        retryOptions: {
+          maxRetries: 3,
+          retryDelay: 10
+        }
       });
 
     const result = await workflow.execute(
       { id: "multi-handler", value: 5 },
-      undefined,
       { errorHandling: 'retry' }
     );
 
@@ -201,9 +207,11 @@ describe('Workflow Retry Functionality', () => {
     const workflow = createWorkflow();
     workflow
       .addHandler(conditionalRetryHandler)
-      .configureRetry({
-        maxRetries: 2,
-        retryDelay: 10
+      .configure({
+        retryOptions: {
+          maxRetries: 2,
+          retryDelay: 10
+        }
       });
 
     const messages: TestMessage[] = [
@@ -212,7 +220,7 @@ describe('Workflow Retry Functionality', () => {
       { id: "test-3", value: 30 }
     ];
 
-    const results = await workflow.executeBulk(messages, {
+    const results = await workflow.execute(messages, {
       strategy: 'queue',
       errorHandling: 'retry'
     });
@@ -264,14 +272,15 @@ describe('Workflow Retry Functionality', () => {
 
     workflow
       .addHandler(stateCapturingHandler)
-      .configureRetry({
-        maxRetries: 3,
-        retryDelay: 10
+      .configure({
+        retryOptions: {
+          maxRetries: 3,
+          retryDelay: 10
+        }
       });
 
     const result = await workflow.execute(
       { id: "state-test", value: 7 },
-      undefined,
       { errorHandling: 'retry' }
     );
 
