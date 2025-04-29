@@ -41,11 +41,11 @@ export class Workflow<T = any, R = any> {
   async execute(message: T, currentState?: WorkflowState): Promise<R | undefined> {
     const state = currentState ? { ...this.initialState, ...currentState } : { ...this.initialState };
     let result: any = message;
-    
+
     for (const handler of this.handlers) {
       result = await handler(result, this.initialState, state);
     }
-    
+
     return result as R;
   }
 
@@ -58,7 +58,7 @@ export class Workflow<T = any, R = any> {
    */
   async executeBulk(messages: T[], options: WorkflowExecutionOptions, currentState?: WorkflowState): Promise<(R | undefined)[]> {
     const state = currentState ? { ...this.initialState, ...currentState } : { ...this.initialState };
-    
+
     switch (options.strategy) {
       case 'queue':
         return this.executeQueue(messages, state);
@@ -120,7 +120,7 @@ export class Workflow<T = any, R = any> {
     for (let i = 0; i < initialBatchSize; i++) {
       pendingPromises.push(runTask());
     }
-    
+
     await Promise.all(pendingPromises);
     return results;
   }
@@ -133,8 +133,4 @@ export class Workflow<T = any, R = any> {
  */
 export function createWorkflow<T = any, R = any>(initialState: WorkflowState = {}): Workflow<T, R> {
   return new Workflow<T, R>(initialState);
-}
-
-export default function main() {
-  console.log("Hello, world!");
 }
