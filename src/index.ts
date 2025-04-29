@@ -85,6 +85,7 @@ export class Workflow<T = any, R = any> {
     const state = currentState ? { ...this.initialState, ...currentState } : { ...this.initialState };
     let result: any = message;
     const errorHandling = options?.errorHandling || 'fail-fast';
+    let lastError: WorkflowError<T> | undefined = undefined;
 
     try {
       for (let i = 0; i < this.handlers.length; i++) {
@@ -100,6 +101,9 @@ export class Workflow<T = any, R = any> {
             state: { ...state }
           };
 
+          // Store the last error that occurred
+          lastError = workflowError;
+
           if (errorHandling === 'continue') {
             // Log the error but continue with the next handler
             console.error(workflowError.message);
@@ -112,6 +116,16 @@ export class Workflow<T = any, R = any> {
             };
           }
         }
+      }
+
+      // If we had errors but used 'continue', return the error in the result
+      if (lastError && errorHandling === 'continue') {
+        return {
+          success: false,
+          error: lastError,
+          // Still include the result as we've processed it partially
+          result: result as R
+        };
       }
 
       return {
@@ -213,7 +227,7 @@ export class Workflow<T = any, R = any> {
     const results: WorkflowResult<R>[] = [];
 
     for (const message of messages) {
-      const result = await this.execute(message, state, { errorHandling });
+      const result = await this.execute(message, { ...state }, { errorHandling });
       results.push(result);
 
       // If fail-fast and we had an error, stop processing
@@ -249,35 +263,35 @@ export class Workflow<T = any, R = any> {
     errorHandling?: ErrorHandlingStrategy
   ): Promise<WorkflowResult<R>[]> {
     const results: WorkflowResult<R>[] = [];
-    const pendingPromises: Promise<void>[] = [];
     const messageQueue = [...messages];
     let hasFailedFast = false;
 
-    const runTask = async (): Promise<void> => {
-      if (messageQueue.length === 0 || hasFailedFast) return;
+    // Process messages in batches with limited concurrency
+    while (messageQueue.length > 0 && !hasFailedFast) {
+      const batchSize = Math.min(concurrency, messageQueue.length);
+      const batch = messageQueue.splice(0, batchSize);
 
-      const message = messageQueue.shift()!;
-      const result = await this.execute(message, state, { errorHandling });
-      results.push(result);
+      const batchResults = await Promise.all(
+        batch.map(async (message) => {
+          const result = await this.execute(message, state, { errorHandling });
 
-      // If fail-fast and we had an error, stop processing further messages
-      if (errorHandling === 'fail-fast' && !result.success) {
-        hasFailedFast = true;
-        return;
+          // If using fail-fast strategy and we got an error, flag to stop processing
+          if (errorHandling === 'fail-fast' && !result.success) {
+            hasFailedFast = true;
+          }
+
+          return result;
+        })
+      );
+
+      results.push(...batchResults);
+
+      // Stop processing if we had a failure with fail-fast strategy
+      if (hasFailedFast) {
+        break;
       }
-
-      if (messageQueue.length > 0 && !hasFailedFast) {
-        await runTask();
-      }
-    };
-
-    // Start initial batch of tasks
-    const initialBatchSize = Math.min(concurrency, messageQueue.length);
-    for (let i = 0; i < initialBatchSize; i++) {
-      pendingPromises.push(runTask());
     }
 
-    await Promise.all(pendingPromises);
     return results;
   }
 }
