@@ -256,7 +256,8 @@ export class Workflow<T = any, R = any> {
 
     // Get retry options with handler-specific overrides if available
     const globalRetryOptions = options.retryOptions || this.globalOptions.retryOptions || { maxRetries: 3, retryDelay: 500, backoffFactor: 2 };
-    const handlerOverrides = globalRetryOptions.handlerOverrides?.[handlerIndex];
+    // Ensure handlerOverrides object exists before accessing it
+    const handlerOverrides = globalRetryOptions.handlerOverrides && globalRetryOptions.handlerOverrides[handlerIndex];
 
     const maxRetries = handlerOverrides?.maxRetries ?? globalRetryOptions.maxRetries;
     let delay = handlerOverrides?.retryDelay ?? globalRetryOptions.retryDelay;
@@ -265,15 +266,28 @@ export class Workflow<T = any, R = any> {
     let lastError: Error | null = null;
     let retryCount = 0;
 
+    // Preserve state between retry attempts
+    let currentState = { ...state };
+
     while (retryCount <= maxRetries) {
       try {
         if (retryCount > 0) {
           console.log(`Retrying handler at index ${handlerIndex}, attempt ${retryCount}/${maxRetries}`);
         }
-        return await handler(message, this.initialState, state);
+        return await handler(message, this.initialState, currentState);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         retryCount++;
+
+        // Update state with retry information that handlers might use
+        currentState = {
+          ...currentState,
+          _retryInfo: {
+            attempt: retryCount,
+            maxRetries: maxRetries,
+            handlerIndex: handlerIndex
+          }
+        };
 
         if (retryCount <= maxRetries) {
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -389,30 +403,10 @@ export class Workflow<T = any, R = any> {
     const concurrency = options.concurrency || this.globalOptions.concurrency || 5;
     const errorHandling = options.errorHandling || this.globalOptions.errorHandling;
 
-    const processNext = async (): Promise<void> => {
-      if (hasFailedFast || messageQueue.length === 0) {
-        return;
-      }
-
-      // Check if we need to wait due to rate limiting
-      const now = Date.now();
-      const timeToWait = Math.max(0, lastRequestTime + minDelayMs - now);
-
-      if (timeToWait > 0) {
-        await new Promise(resolve => setTimeout(resolve, timeToWait));
-      }
-
-      // Get the next message
-      const message = messageQueue.shift()!;
-      const currentIndex = index++;
-      activeCount++;
-      lastRequestTime = Date.now();
-
+    // Function to process a single message
+    const processMessage = async (message: T, currentIndex: number): Promise<void> => {
       try {
-        // Use executeSingle directly to avoid recursion
         const result = await this.executeSingle(message, state, options);
-
-        // Store result in the correct order
         results[currentIndex] = result as WorkflowResult<R>;
 
         // If using fail-fast strategy and we got an error, flag to stop processing
@@ -436,27 +430,44 @@ export class Workflow<T = any, R = any> {
         if (errorHandling === 'fail-fast') {
           hasFailedFast = true;
         }
-      } finally {
-        activeCount--;
-
-        // Try to process next message
-        processNext();
       }
     };
 
-    // Start initial batch of requests up to concurrency limit
-    const startPromises = [];
-    for (let i = 0; i < Math.min(concurrency, messages.length); i++) {
-      startPromises.push(processNext());
-    }
+    // Process messages in batches respecting concurrency and rate limits
+    const processQueue = async (): Promise<void> => {
+      while (messageQueue.length > 0 && !hasFailedFast) {
+        // Take up to concurrency number of messages to process in this batch
+        const currentBatch: Promise<void>[] = [];
 
-    // Wait for all requests to complete
-    await Promise.all(startPromises);
+        // Process up to concurrency items at once
+        for (let i = 0; i < Math.min(concurrency, messageQueue.length); i++) {
+          if (hasFailedFast) break;
 
-    // Wait until all active requests finish
-    while (activeCount > 0) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
+          // Apply rate limiting if needed
+          if (minDelayMs > 0 && i > 0) {
+            const now = Date.now();
+            const timeToWait = Math.max(0, lastRequestTime + minDelayMs - now);
+            if (timeToWait > 0) {
+              await new Promise(resolve => setTimeout(resolve, timeToWait));
+            }
+          }
+
+          const message = messageQueue.shift();
+          if (message === undefined) break;
+
+          const currentIndex = index++;
+          lastRequestTime = Date.now();
+
+          currentBatch.push(processMessage(message, currentIndex));
+        }
+
+        // Wait for current batch to complete before starting next batch
+        await Promise.all(currentBatch);
+      }
+    };
+
+    // Start processing the queue
+    await processQueue();
 
     // Filter out any undefined results (should not happen, but just in case)
     return results.filter(r => r !== undefined);
